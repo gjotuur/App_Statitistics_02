@@ -21,6 +21,13 @@ typedef struct{
     double range;
 }confidence_interval_t;
 
+typedef struct{
+    double d_n;
+    double k_n;
+    double z_gamma;
+    bool criteria_passed;
+}hypothesis_result_t;
+
 //RNG`s
 double get_rand_01();
 double* get_rands(uint64_t size);
@@ -34,26 +41,14 @@ stat_sample_t* Get_Sample_exp(uint64_t size, double lambda);
 stat_sample_t* Copy_Sample(stat_sample_t* s1);
 stat_sample_t* Get_Sample_u(const stat_sample_t* base, double lambda);
 
+//Statistical functions
+double F_Kolmogorov(double z, double epsilon);
+double Find_Z_gamma(double gamma, double epsilon);
+
 
 int main(){
-    uint64_t rands_size = 100;
-    double* first_smp = get_rands(rands_size);
-
-    for(uint64_t i = 0; i < rands_size; i++){
-        printf("r[%3d] = %.3lf  ", i+1, first_smp[i]);
-        if((i + 1) % 10 == 0) printf("\n");
-    }
-
-    printf("\n");
-
-    stat_sample_t* sample = Get_Sample_exp(100, (double)4);
-
-    for(uint64_t i = 0; i < 100; i++){
-        printf("e[%3d] = %.3lf  ", i+1, sample->samples[i]);
-        if((i + 1) % 10 == 0) printf("\n");
-    }
-
-    Clear_Samples(sample, NULL);
+    stat_sample_t* sample = Get_Sample_exp(100, 1);
+    stat_sample_t* sample2 = Get_Sample_exp(100, 1.2);
 
     return 0;
 }
@@ -187,5 +182,80 @@ void Sample_Analyze(stat_sample_t* s, double* mean, double* var, bool bias, doub
     *st_dev = s_st_dev;
 }
 
+double F_Kolmogorov(double z, double epsilon){
+    if(z <= 0.0) return (double)0;
+    if(z <= 0.15) return (double)0;
+
+    double s = (double)0;
+    int k = 1;
+
+    while(true){
+        double  sign = (k%2 == 0) ? 1.0 : -1.0,
+                term = sign * exp(-2.0 * k * k * z * z);
+        s += term;
+
+        if(fabs(term) < epsilon){
+            break;
+        }
+
+        k++;
+        if(k > 1000) break;
+    }
+    double res = 1.0 + 2.0 * s;
+
+    if(res < 0.0) return 0.0;
+    if(res > 1.0) return 1.0;
+
+    return res;
+}
+
+double Find_Z_gamma(double gamma, double epsilon){
+    double  target = 1.0 - gamma, low = 0.0,
+            high = 5.0, mid = 0.0;
+
+    for(int i = 0; i < 100; i++){
+        mid = low + ((high - low) / 2.0);
+        double value = F_Kolmogorov(mid, 1e-6);
+
+        if(value < target){
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    return mid;
+}
+
+//Utility function for qsort
+int cmp_double(const void* a, const void* b){
+    double da = *(const double*)a;
+    double db = *(const double*)b;
+
+    return (da > db) - (da < db);
+}
+
+hypothesis_result_t Kolmogorov_Criteria(stat_sample_t* y, double gamma, double epsilon){
+    hypothesis_result_t res;
+    uint64_t N = y->size;
+
+    qsort(y->samples, N, sizeof(double), cmp_double);
+
+    double max_d = 0.0;
+    
+    for(uint64_t i = 1; i <= N; i++){
+        double d_plus = ((double)i / N) - y->samples[i - 1];
+        double d_minus = y->samples[i - 1] - ((double)(i-1) / N);
+
+        if(d_plus > max_d) max_d = d_plus;
+        if(d_minus > max_d) max_d = d_plus;
+    }
+    res.d_n = max_d;
+
+    res.k_n = sqrt((double)N) * res.d_n;
+    res.z_gamma = Find_Z_gamma(gamma, epsilon);
+    res.criteria_passed = (res.k_n < res.z_gamma);
+
+    return res;
+}
 
 //NULL
